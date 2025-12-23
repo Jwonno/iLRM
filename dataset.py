@@ -27,9 +27,10 @@ class Dataset(Dataset):
     def __init__(self, config):
         self.config = config
         data_path_text = config.data.data_path
+        base_dir = data_path_text.rsplit('/', 1)[0]
         with open(data_path_text, 'r') as f:
             self.data_path = f.readlines()
-        self.data_path = [x.strip() for x in self.data_path]
+        self.data_path = [base_dir + '/' + x.strip() for x in self.data_path]
         self.data_path = [x for x in self.data_path if len(x) > 0]
 
     def __len__(self):
@@ -42,7 +43,16 @@ class Dataset(Dataset):
         resize_h = self.config.data.get("resize_h", -1)
         resize_w = self.config.data.get("resize_w", -1)
         patch_size = self.config.model.image_tokenizer.patch_size * self.config.model.viewpoint_factor
+        square_crop = self.config.data.get("square_crop", False)
 
+        if resize_h == -1 and resize_w == -1:
+            resize_h = frames[0]['h']
+            resize_w = frames[0]['w']
+        elif resize_h == -1:
+            resize_h = int(resize_w / frames[0]['w'] * frames[0]['h'])
+        elif resize_w == -1:
+            resize_w = int(resize_h / frames[0]['h'] * frames[0]['w'])
+        
         resize_h = int(round(resize_h / patch_size)) * patch_size # 544
         resize_w = int(round(resize_w / patch_size)) * patch_size # 960
 
@@ -57,6 +67,16 @@ class Dataset(Dataset):
 
         intrinsics = torch.tensor(fxfycxcy_list, dtype=torch.float32)  # (num_frames, 4)
         images = torch.stack(image_list, dim=0)
+        
+        if square_crop:
+            min_size = min(resize_h, resize_w)
+            # center crop
+            start_h = (resize_h - min_size) // 2
+            start_w = (resize_w - min_size) // 2
+            images = images[:, :, start_h:start_h+min_size, start_w:start_w+min_size]
+            intrinsics[:, 2] -= start_w
+            intrinsics[:, 3] -= start_h
+
         c2ws = np.stack([np.array(frame["w2c"]) for frame in frames])
         c2ws = np.linalg.inv(c2ws)
         c2ws = torch.from_numpy(c2ws).float()
@@ -68,10 +88,6 @@ class Dataset(Dataset):
 
     def __getitem__(self, idx):
         try:
-            with open("data/dl3dv_fold_8_kmeans_input_idx.json", "r") as f:
-                eval_data = json.load(f)
-            scene_dict = {item["scene_name"]: item for item in eval_data}
-
             data_path = self.data_path[idx]
             data_json = json.load(open(data_path, 'r'))
             scene_name = data_json['scene_name']
@@ -91,6 +107,8 @@ class Dataset(Dataset):
             if min_frame_dist == "all":
                 min_frame_dist = len(frames) - 1
                 max_frame_dist = min_frame_dist
+            if max_frame_dist == "all":
+                max_frame_dist = len(frames) - 1
             min_frame_dist = min(min_frame_dist, len(frames) - 1)
             max_frame_dist = min(max_frame_dist, len(frames) - 1)
             assert min_frame_dist <= max_frame_dist
@@ -131,6 +149,9 @@ class Dataset(Dataset):
                 input_frame_idx = np.linspace(0, len(frame_idx) - 1, num_input_frames, dtype=int)
                 input_frame_idx = [frame_idx[i] for i in input_frame_idx]
             elif input_frame_select_type == 'kmeans':
+                with open("data/dl3dv_fold_8_kmeans_input_idx.json", "r") as f:
+                    eval_data = json.load(f)
+                    scene_dict = {item["scene_name"]: item for item in eval_data}
                 input_frame_idx = scene_dict[scene_name]["fold_8_kmeans_32_input"]
             else:
                 raise NotImplementedError
@@ -174,7 +195,7 @@ class Dataset(Dataset):
             down_avg = input_c2ws[:, :3, 1].mean(0) # (3,)
             forward_avg = F.normalize(forward_avg, dim=0)
             down_avg = F.normalize(down_avg - down_avg.dot(forward_avg) * forward_avg, dim=0)
-            right_avg = torch.cross(down_avg, forward_avg)
+            right_avg = torch.linalg.cross(down_avg, forward_avg)
             pos_avg = torch.stack([right_avg, down_avg, forward_avg, position_avg], dim=1) # (3, 4)
             pos_avg = torch.cat([pos_avg, torch.tensor([[0, 0, 0, 1]], device=pos_avg.device).float()], dim=0) # (4, 4)
             pos_avg_inv = torch.inverse(pos_avg)

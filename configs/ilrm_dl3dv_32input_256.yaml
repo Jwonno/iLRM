@@ -1,0 +1,101 @@
+model:
+  class_name: ilrm.IterativeLRM
+
+  viewpoint_factor: 2
+
+  image_tokenizer:
+    patch_size: 8
+    in_channels: 12
+
+  viewpoint_tokenizer:
+    patch_size: 8
+    in_channels: 9
+  transformer:
+    d: 768
+    d_head: 64
+    n_layer: 24
+
+  gaussians:
+    sh_degree: 0
+    near_plane: 0.01
+    far_plane: 1000000.0
+    scale_bias: -6.9
+    scale_max: -1.2
+    opacity_bias: -2.0
+    max_dist: 500.0
+
+data:
+  data_path: "dataset/DL3DV-10K/scene_paths.txt"
+  square_crop: true
+  resize_h: 256
+  input_frame_select_type: "uniform"
+  target_frame_select_type: "random"
+  num_input_frames: 32
+  num_target_frames: 8
+  target_has_input: false
+  min_frame_dist: 64
+  max_frame_dist: 128
+  shuffle_input_prob: 0.5
+  reverse_input_prob: 0.5
+  target_uniform_every: 8
+
+train:
+  save_video: true
+  save_images: true
+  compute_metrics: true
+  
+  dataset_name: dataset.Dataset
+  num_threads: 8
+  prefetch_factor: 4  
+
+  use_sync_bn: true
+  use_tf32: true
+
+  reset_training_state: true
+
+  # --- Learning Rate & Scheduler ---
+  lr: 2.0e-4               # Peak learning rate
+  min_lr: 1.0e-6           # Minimum LR (Cosine decay target, usually small value or 0)
+  warmup_steps: 2500       # Warmup iterations
+  scheduler_type: "cosine" # Custom implementation used above
+  
+  # --- Optimizer (AdamW) ---
+  optimizer_type: "adamw"
+  beta1: 0.9
+  beta2: 0.095             # 논문에서 제시한 특이값 (보통 0.999인데 0.095로 설정됨)
+  weight_decay: 0.05       # Applied to linear layers, etc.
+  
+  # --- Training Loop ---
+  train_steps: 1000000      # 전체 학습 스텝 (예시)
+  batch_size_per_gpu: 4    # GPU당 배치 사이즈
+  grad_accum_steps: 4      # 그래디언트 누적
+  grad_clip_norm: 10.0
+
+  # --- System ---
+  use_amp: True
+  amp_dtype: "bf16"        # 최신 GPU라면 bf16 추천, 아니면 fp16
+  num_workers: 8
+  
+  # --- Logging & Save ---
+  out_dir: ./experiments/train/iLRM_dl3dv_32input_256
+  use_wandb: true
+  print_every: 10
+  wandb_every: 50
+  save_interval: 1000
+  wandb_entity: saegeulu-seoul-national-university-ofscience-and-technology
+  wandb_project: iLRM
+  experiment_name: "iLRM_self_training"
+
+  # loss
+  perceptual_loss_weight: 0.5
+  # perceptual loss settings from https://github.com/zhengqili/Crowdsampling-the-Plenoptic-Function/blob/master/models/networks.py#L1478
+  perceptual_out_idx: [4, 9, 14, 23, 32]
+  perceptual_out_weights: [0.3846, 0.2083, 0.2703, 0.1786, 6.6667]
+  perceptual_feature_scale: 255.0
+  # weights converted from https://www.vlfeat.org/matconvnet/pretrained/
+  # in the case of github lfs quota issue, download the converted checkpoint from huggingface
+  # https://huggingface.co/arthurhero/llrm_stuff/resolve/main/misc/matconvnet_vgg19.pt
+  perceptual_vgg_weights: "matconvnet_vgg19.pt"
+
+inference:
+  out_dir: ./experiments/train/iLRM_dl3dv_32input_256

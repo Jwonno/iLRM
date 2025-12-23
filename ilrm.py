@@ -231,11 +231,18 @@ class IterativeLRM(nn.Module):
 
         input_tokens = self.image_tokenizer(i_posed_images)
         viewpoint_tokens = self.viewpoint_tokenizer(v_viewpoints)
+        # output_tokens = self.processor(
+            # viewpoint_tokens,
+            # input_tokens,
+            # v
+        # )
         output_tokens = self.processor(
             viewpoint_tokens,
             input_tokens,
-            v
+            v,
+            use_checkpoint=False
         )
+
         gaussians = self.viewpoint_token_decoder(output_tokens)        
         gaussians = rearrange(
             gaussians, "b (v hh ww) (ph pw d) -> b (v hh ph ww pw) d", v=v, 
@@ -272,7 +279,7 @@ class IterativeLRM(nn.Module):
         }
 
         torch.cuda.synchronize()
-        print(time.time() - inference_start, "inference_speed")
+        # print(time.time() - inference_start, "inference_speed")
 
         if finetune:
             result = edict(

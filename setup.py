@@ -54,7 +54,7 @@ def init_config():
     # Convert to EasyDict if needed
     config = OmegaConf.to_container(config, resolve=True)
     config = edict(config)
-    return config
+    return config, args.config
 
 #################Init Config End#################
 

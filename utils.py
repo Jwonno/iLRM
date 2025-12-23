@@ -122,3 +122,50 @@ def compute_rays_resolution_offset(fxfycxcy, c2w, h, w, offset, factor=2):
     ray_d = rearrange(ray_d, 'b v c h w -> b (v h w) c')
 
     return ray_o, ray_d
+
+import torch
+import torch.nn as nn
+from torchvision.models import vgg19, VGG19_Weights
+
+class PerceptualLoss(nn.Module):
+    def __init__(self, device, config):
+        super(PerceptualLoss, self).__init__()
+        vgg_weigths = config.train.get("perceptual_vgg_weights", "default")
+        if vgg_weigths == "default":
+            vgg = vgg19(weights=VGG19_Weights.IMAGENET1K_V1)
+        else:
+            vgg = vgg19()
+            vgg.load_state_dict(torch.load(vgg_weigths, map_location="cpu"))
+        #print(vgg.features)
+        # replace the maxpool layer with avgpool
+        for i, layer in enumerate(vgg.features):
+            if isinstance(layer, nn.MaxPool2d):
+                vgg.features[i] = nn.AvgPool2d(kernel_size=2, stride=2)
+        self.blocks = nn.ModuleList()
+        out_idx = config.train.perceptual_out_idx
+        out_idx = [0] + out_idx
+        self.layer_weights = config.train.perceptual_out_weights
+        assert len(self.layer_weights) == len(out_idx) - 1
+        self.feature_scale = config.train.perceptual_feature_scale
+        for i in range(len(out_idx)-1):
+            self.blocks.append(nn.Sequential(vgg.features[out_idx[i]:out_idx[i+1]]).to(device).eval())
+        for param in self.blocks.parameters():
+            param.requires_grad = False
+        self.register_buffer("mean", torch.tensor([0.485, 0.456, 0.406]).view(1, 3, 1, 1).to(device))
+        #self.register_buffer("std", torch.tensor([0.229, 0.224, 0.225]).view(1, 3, 1, 1).to(device))
+ 
+    def forward(self, pred, target):
+        """
+        pred, target: [B, 3, H, W] in range [0, 1]
+        """
+        weights = self.layer_weights
+        scale = self.feature_scale
+        pred = (pred - self.mean) * scale
+        target = (target - self.mean) * scale
+        loss = torch.mean(torch.abs(pred - target))
+        for i_b, block in enumerate(self.blocks):
+            pred = block(pred)
+            target = block(target)
+            loss += torch.mean(torch.abs(pred - target)) * weights[i_b]
+        loss = loss / scale
+        return loss

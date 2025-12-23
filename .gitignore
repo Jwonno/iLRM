@@ -1,1 +1,7 @@
 experiments/
+__pycache__/
+*.pyc
+dataset/
+dataset
+wandb/
+*.pt

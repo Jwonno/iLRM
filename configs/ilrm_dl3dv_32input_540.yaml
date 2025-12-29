@@ -78,7 +78,7 @@ train:
   num_workers: 7
   
   # --- Logging & Save ---
-  out_dir: ./experiments/train/iLRM_dl3dv_32input_540_beta2_0995
+  out_dir: ./experiments/train/iLRM_dl3dv_32input_540_beta2_095
   use_wandb: true
   print_every: 10
   wandb_every: 10
@@ -111,4 +111,4 @@ inference:
   save_images: true
   save_ply: true
   compute_metrics: true
-  out_dir: ./experiments/train/iLRM_dl3dv_32input_540_beta2_0995
+  out_dir: ./experiments/train/iLRM_dl3dv_32input_540_beta2_095

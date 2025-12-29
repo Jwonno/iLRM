@@ -294,7 +294,7 @@ while step < train_steps:
                                      save_video=save_video,
                                      save_ply=save_ply,
                                      uid=step)
-                if rank == 0:
+                if rank == 0 and (save_images or save_metrics):
                     export_results(ret_dict, config.inference.out_dir, 
                         compute_metrics=save_metrics, 
                         save_images=save_images,

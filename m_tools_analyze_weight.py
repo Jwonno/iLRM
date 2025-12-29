@@ -118,7 +118,8 @@ def analyze_checkpoint(ckpt_path):
         plt.grid(True, alpha=0.3)
         
         plt.tight_layout()
-        plt.show()
+        # plt.show()
+        plt.savefig("optimizer_analysis_histograms.png")
         print("\n📊 Histogram displayed. Check 'Log10(v_t)' for left-skewed spikes.")
     except Exception as e:
         print(f"\nCould not plot histogram: {e}")

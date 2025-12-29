@@ -304,10 +304,15 @@ def get_interpolated_poses_many(
     traj = np.stack(traj, axis=0)
     k_interp = torch.stack(k_interp, dim=0)
     time_interp = torch.stack(time_interp, dim=0) if time_interp is not None else None
+    # return (
+    #     torch.tensor(traj, dtype=torch.float32),
+    #     torch.tensor(k_interp, dtype=torch.float32),
+    #     torch.tensor(time_interp, dtype=torch.float32) if time_interp is not None else None,
+    # )
     return (
-        torch.tensor(traj, dtype=torch.float32),
-        torch.tensor(k_interp, dtype=torch.float32),
-        torch.tensor(time_interp, dtype=torch.float32) if time_interp is not None else None,
+        torch.from_numpy(traj).float(),
+        k_interp.clone().detach().float(),
+        time_interp.clone().detach().float() if time_interp is not None else None,
     )
 
 

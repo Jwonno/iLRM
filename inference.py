@@ -7,7 +7,7 @@ from torch.utils.data import DataLoader
 from setup import init_config
 from metric_utils import export_results, summarize_evaluation
 
-config = init_config()
+config, _ = init_config()
 
 os.environ["OMP_NUM_THREADS"] = str(config.inference.get("num_threads", 1))
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -43,7 +43,21 @@ dataloader_iter = iter(dataloader)
 module, class_name = config.model.class_name.rsplit(".", 1)
 ILRM = importlib.import_module(module).__dict__[class_name]
 model = ILRM(config).to(device)
-model.load_ckpt(config.inference.get("ckpt_path", None))
+if config.inference.get("ckpt_path", None) is not None:
+    model.load_ckpt(config.inference.get("ckpt_path", None))
+else:
+    import torch.nn as nn
+    def init_weights(m):
+        if isinstance(m, nn.Linear):
+            # Linear Layer 가중치 초기화
+            nn.init.normal_(m.weight, mean=0.0, std=0.02)
+            # "Bias terms are omitted" -> 모델 정의 시 bias=False여야 하지만, 
+            # 혹시 남아있다면 0으로 초기화하거나 무시
+            if m.bias is not None:
+                nn.init.constant_(m.bias, 0)
+        elif isinstance(m, nn.Embedding):
+            nn.init.normal_(m.weight, mean=0.0, std=0.02)
+    model.apply(init_weights)
 
 print(f"Running inference; save results to: {config.inference.out_dir}")
 import warnings
@@ -61,7 +75,9 @@ with torch.no_grad(), torch.autocast(
         input_data_dict = {key: value[:, :config.data.num_input_frames] if type(value) == torch.Tensor else value for key, value in batch.items()}
         target_data_dict = {key: value[:, config.data.num_input_frames:] if type(value) == torch.Tensor else None for key, value in batch.items()}
         result = model(input_data_dict, target_data_dict, 
-                       save_video=config.inference.get("save_video"))
+                       save_video=config.inference.get("save_video"),
+                       save_ply=config.inference.get("save_ply"),
+                       )
         export_results(result, config.inference.out_dir, 
                        compute_metrics=config.inference.get("compute_metrics"), 
                        save_images=config.inference.get("save_images"),

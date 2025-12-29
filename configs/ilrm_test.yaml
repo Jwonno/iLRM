@@ -58,7 +58,7 @@ train:
   # --- Optimizer (AdamW) ---
   optimizer_type: "adamw"
   beta1: 0.9
-  beta2: 0.95
+  beta2: 0.995             # 논문에서 제시한 특이값 (보통 0.999인데 0.095로 설정됨)
   weight_decay: 0.05       # Applied to linear layers, etc.
   
   # --- Training Loop ---
@@ -73,17 +73,17 @@ train:
   num_workers: 7
   
   # --- Logging & Save ---
-  out_dir: ./experiments/train/iLRM_dl3dv_32input_256_beta2_0995
+  out_dir: ./experiments/train/iLRM_dl3dv_32input_256_beta2_0995_test
   use_wandb: true
   print_every: 10
   wandb_every: 10
-
+  
   save_video_interval: 1000
   save_ply_interval: 10000
   save_image_interval: 1000
   save_metrics_interval: 1000
   save_ckpt_interval: 1000
-  
+
   wandb_entity: saegeulu-seoul-national-university-ofscience-and-technology
   wandb_project: iLRM
   experiment_name: "iLRM_self_training"
@@ -104,4 +104,4 @@ inference:
   save_images: true
   save_ply: true
   compute_metrics: true
-  out_dir: ./experiments/train/iLRM_dl3dv_32input_256_beta2_0995
+  out_dir: ./experiments/train/iLRM_dl3dv_32input_256_beta2_0995_test

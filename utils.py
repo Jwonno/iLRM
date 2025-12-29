@@ -135,7 +135,7 @@ class PerceptualLoss(nn.Module):
             vgg = vgg19(weights=VGG19_Weights.IMAGENET1K_V1)
         else:
             vgg = vgg19()
-            vgg.load_state_dict(torch.load(vgg_weigths, map_location="cpu"))
+            vgg.load_state_dict(torch.load(vgg_weigths, map_location="cpu", weights_only=True))
         #print(vgg.features)
         # replace the maxpool layer with avgpool
         for i, layer in enumerate(vgg.features):

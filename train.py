@@ -20,6 +20,7 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data import DataLoader, DistributedSampler
 
 from utils import PerceptualLoss
+from metric_utils import export_results
 
 # 사용자 라이브러리 (setup, metric_utils 등)
 from setup import init_config
@@ -206,9 +207,9 @@ if ckpt_path:
     log_info(f"Resuming from {ckpt_path}")
     checkpoint = torch.load(ckpt_path, map_location=device)
     if isinstance(model, DDP):
-        status = model.module.load_state_dict(checkpoint['model'], strict=False)
+        status = model.module.load_state_dict(checkpoint['model'], strict=True)
     else:
-        status = model.load_state_dict(checkpoint['model'], strict=False)
+        status = model.load_state_dict(checkpoint['model'], strict=True)
     log_info(f"Loaded model state: {status}")
 
     if not config.train.get("reset_training_state", False):
@@ -246,11 +247,18 @@ datasampler.set_epoch(cur_epoch)
 
 perceptual_loss_fn = PerceptualLoss(device, config)
 
+sum_of_step_times = 0.0
+
 while step < train_steps:
     step_start_time = time.time()
     
     # Gradient Accumulation Loop
     accum_loss = 0.0
+
+    # Logging 용도
+    accum_l2_loss = 0.0
+    accum_perceptual_loss = 0.0
+
     for accum_step in range(grad_accum_steps):
         try:
             batch = next(dataloader_iter)
@@ -276,8 +284,21 @@ while step < train_steps:
                 batch = {k: v.to(device) if type(v) == torch.Tensor else v for k, v in batch.items()}
                 input_data_dict = {key: value[:, :config.data.num_input_frames] if type(value) == torch.Tensor else value for key, value in batch.items()}
                 target_data_dict = {key: value[:, config.data.num_input_frames:] if type(value) == torch.Tensor else None for key, value in batch.items()}
+                
+                save_video = config.inference.get("save_video", False) and (step % config.train.get("save_video_interval", 1000) == 0)
+                save_ply = config.inference.get("save_ply", False) and (step % config.train.get("save_ply_interval", 10000) == 0)
+                save_images = config.inference.get("save_images", False) and (step % config.train.get("save_image_interval", 1000) == 0)
+                save_metrics = config.inference.get("compute_metrics", False) and (step % config.train.get("save_metrics_interval", 1000) == 0)
+
                 ret_dict = model(input_data_dict, target_data_dict, 
-                       save_video=config.inference.get("save_video")) 
+                                     save_video=save_video,
+                                     save_ply=save_ply,
+                                     uid=step)
+                if rank == 0:
+                    export_results(ret_dict, config.inference.out_dir, 
+                        compute_metrics=save_metrics, 
+                        save_images=save_images,
+                        uid=step)
                 
                 # Compute Loss
                 target_render = ret_dict['render'].reshape(-1, ret_dict['render'].shape[-3], ret_dict['render'].shape[-2], ret_dict['render'].shape[-1])
@@ -288,6 +309,10 @@ while step < train_steps:
                 
                 # Normalize loss for accumulation
                 total_loss = total_loss / grad_accum_steps
+
+                # Logging 용도
+                accum_l2_loss += l2_loss.item() / grad_accum_steps
+                accum_perceptual_loss += perceptual_loss.item() / grad_accum_steps
             
             # Backward
             scaler.scale(total_loss).backward()
@@ -313,22 +338,26 @@ while step < train_steps:
         optimizer.zero_grad()
     
     step_time = time.time() - step_start_time
+    sum_of_step_times += step_time
     
     # --- Logging & Checkpoint ---
     if rank == 0:
         if step % config.train.print_every == 0:
-            print(f"Step {step}/{train_steps} | Epoch {cur_epoch} | Loss: {accum_loss:.4f} | Grad: {grad_norm:.2f} | Time: {step_time:.3f}s")
+            print(f"Step {step}/{train_steps} | Epoch {cur_epoch} | Loss: {accum_loss:.4f} | Grad: {grad_norm:.2f} | Time: {sum_of_step_times:.3f}s | Step Time: {step_time:.3f}s")
+            sum_of_step_times = 0.0
             
         if step % config.train.get("wandb_every", 100) == 0 and wandb:
             wandb.log({
                 "train/loss": accum_loss,
+                "train/l2_loss": accum_l2_loss,
+                "train/perceptual_loss": accum_perceptual_loss,
                 "train/grad_norm": grad_norm,
                 "train/lr": optimizer.param_groups[0]['lr'],
-                "train/step_time": step_time,
+                # "train/step_time": step_time,
                 "train/epoch": cur_epoch
             }, step=step)
             
-        if step % config.train.save_interval == 0 and step > 0:
+        if step % config.train.save_ckpt_interval == 0 and step > 0:
             save_path = os.path.join(checkpoint_dir, f"ckpt_{step:06d}.pt")
             torch.save({
                 'step': step,

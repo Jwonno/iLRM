@@ -202,6 +202,8 @@ class IterativeLRM(nn.Module):
         target_data_dict,
         finetune=False,
         save_video=False,
+        save_ply=False,
+        uid=0
     ):
         torch.cuda.synchronize()
         inference_start = time.time()        
@@ -231,16 +233,10 @@ class IterativeLRM(nn.Module):
 
         input_tokens = self.image_tokenizer(i_posed_images)
         viewpoint_tokens = self.viewpoint_tokenizer(v_viewpoints)
-        # output_tokens = self.processor(
-            # viewpoint_tokens,
-            # input_tokens,
-            # v
-        # )
         output_tokens = self.processor(
             viewpoint_tokens,
             input_tokens,
-            v,
-            use_checkpoint=False
+            v
         )
 
         gaussians = self.viewpoint_token_decoder(output_tokens)        
@@ -296,15 +292,25 @@ class IterativeLRM(nn.Module):
             gaussian_first = {k: v[0] for k, v in gaussians.items()}
 
             scene_name = input_data_dict["scene_name"][0][:5]
-            output_dir = os.path.join(self.config.inference.out_dir, "videos", scene_name)
-            if not os.path.exists(output_dir):
-                os.makedirs(output_dir, exist_ok=True)
+            video_output_dir = os.path.join(self.config.inference.out_dir, f"{uid:06d}", \
+                                      scene_name)
+            if not os.path.exists(video_output_dir):
+                os.makedirs(video_output_dir, exist_ok=True)
 
             self.save_input_video(
                 input_intr, input_c2ws, gaussian_first, h, w,
-                os.path.join(output_dir, "input_traj.mp4"),
+                os.path.join(video_output_dir, "input_traj.mp4"),
                 insert_frame_num=16
             )
+
+        if save_ply:
+            gaussian_first = {k: v[0] for k, v in gaussians.items()}
+            scene_name = input_data_dict["scene_name"][0][:5]
+            ply_output_dir = os.path.join(self.config.inference.out_dir, f"{uid:06d}", \
+                                      scene_name)
+            if not os.path.exists(ply_output_dir):
+                os.makedirs(ply_output_dir, exist_ok=True)
+            self.save_gaussian_ply(gaussian_first, ply_output_dir+"/gaussians.ply")
 
         xyz = gaussians["xyz"]
         feature = gaussians["feature"]
@@ -416,6 +422,8 @@ class IterativeLRM(nn.Module):
         else:
             ckpt_paths = [load_path]
         try:
+            from easydict import EasyDict
+            torch.serialization.add_safe_globals([EasyDict])
             checkpoint = torch.load(ckpt_paths[-1], map_location="cpu", weights_only=True)
         except:
             traceback.print_exc()
@@ -424,3 +432,52 @@ class IterativeLRM(nn.Module):
         
         self.load_state_dict(checkpoint["model"], strict=True)
         return 0
+    
+    def save_gaussian_ply(self, gaussian_dict, save_path):
+        """
+        Adapted from the original 3D GS implementation
+        https://github.com/graphdeco-inria/gaussian-splatting/blob/main/scene/gaussian_model.py
+        """
+        from plyfile import PlyData, PlyElement
+        xyz = gaussian_dict["xyz"].detach().cpu().float()   # (N, 3)
+        normal = torch.zeros_like(xyz)               # (N, 3)
+        N = xyz.shape[0]
+        feature = gaussian_dict["feature"].detach().cpu().float()  # (N, (sh_degree+1)**2, 3)
+        f_dc = feature[:, 0].contiguous()   # (N, 3)
+        
+        # option 1  (Long-LRM style)
+        # f_rest_full = torch.zeros(N, 3*(3+1)**2-3).float()  # (N, 3*(sh_degree+1)**2-3)
+        # if feature.shape[1] >= 4:
+        #     f_rest = feature[:, 1:].transpose(1, 2).reshape(N, -1)  # sh degree first -> rgb channel first
+        #     f_rest_full[:, :f_rest.shape[1]] = f_rest
+        # f_rest_full = f_rest_full.contiguous()
+
+        # option 2 (3DGS style)
+        if feature.shape[1] >= 4:
+            f_rest = feature[:, 1:].transpose(1, 2).flatten(start_dim=1).contiguous()  # sh degree first -> rgb channel first
+        else:
+            f_rest = torch.zeros(N, 3*(3+1)**2-3).float()  # (N, 3*(sh_degree+1)**2-3)
+        scale = gaussian_dict["scale"].detach().cpu().float()   # (N, 3)
+        opacity = gaussian_dict["opacity"].detach().cpu().float()   # (N, 1)
+        rotation = gaussian_dict["rotation"].detach().cpu().float()   # (N, 4)
+        attributes = np.concatenate([
+            xyz.numpy(), 
+            normal.numpy(), 
+            f_dc.numpy(), 
+            f_rest.numpy(), 
+            scale.numpy(), 
+            opacity.numpy(), 
+            rotation.numpy()
+            ], axis=1)
+        attribute_list = ['x', 'y', 'z', 'nx', 'ny', 'nz']
+        attribute_list += ['f_dc_{}'.format(c) for c in range(f_dc.shape[1])]
+        attribute_list += ['f_rest_{}'.format(c) for c in range(f_rest.shape[1])]
+        attribute_list += ['opacity']
+        attribute_list += ['scale_{}'.format(i) for i in range(scale.shape[1])]
+        attribute_list += ['rot_{}'.format(i) for i in range(rotation.shape[1])]
+        dtype_full = [(attribute, 'f4') for attribute in attribute_list]
+        dtype_full[3:6] = [(attribute, 'u1') for attribute in attribute_list[3:6]]  # normal as uint8
+        elements = np.empty(attributes.shape[0], dtype=dtype_full)
+        elements[:] = list(map(tuple, attributes))
+        el = PlyElement.describe(elements, 'vertex')
+        PlyData([el]).write(save_path)

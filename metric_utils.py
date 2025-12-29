@@ -136,69 +136,71 @@ def export_results(
     rendered_image = result.render
     input_data = result.input
 
-    for batch_idx in range(input_data["image"].size(0)):
-        scene_name = input_data["scene_name"]
-        sample_dir = os.path.join(out_dir, f"{uid:06d}")
-        os.makedirs(sample_dir, exist_ok=True)
-        
-        # Get target view indices
-        target_indices = target_data["index"][batch_idx, :].cpu().numpy()
-        
-        # Save images
-        if save_images:
-            _save_images(result, batch_idx, sample_dir)
-        
-        # Compute and save metrics if requested
-        if compute_metrics:
-            _save_metrics(
-                target_data["image"][batch_idx],
-                rendered_image[batch_idx],
+    scene_name = input_data["scene_name"]
+    sample_dir = os.path.join(out_dir, f"{uid:06d}")
+    os.makedirs(sample_dir, exist_ok=True)
+
+    # Save images
+    if save_images:
+        _save_images(result, sample_dir)
+
+    if compute_metrics:
+        target_indices = target_data["index"].cpu().numpy()
+        _save_metrics(
+                target_data["image"],
+                rendered_image,
                 target_indices,
                 sample_dir,
                 scene_name
             )
+            
 
 
-def _save_images(result, batch_idx, out_dir):
+def _save_images(result, out_dir):
     """Save visualization images."""
-    # Save input image
-    input_img = result.input["image"][batch_idx]
+    # Save input image (only for the first batch)
+    input_img = result.input["image"][0]
     input_img = rearrange(input_img, "v c h w -> h (v w) c")
     input_img = (input_img.cpu().numpy() * 255.0).clip(0.0, 255.0).astype(np.uint8)
     Image.fromarray(input_img).save(os.path.join(out_dir, "input.png"))
 
     # Save GT vs prediction side-by-side
-    comparison = torch.cat(
-        (result.target["image"][batch_idx], result.render[batch_idx]), 
-        dim=2
-    ).detach().cpu()
-    comparison = rearrange(comparison, "v c h w -> h (v w) c")
-    comparison = (comparison.numpy() * 255.0).clip(0.0, 255.0).astype(np.uint8)
-    Image.fromarray(comparison).save(os.path.join(out_dir, "gt_vs_pred.png"))
-    
+    comparison_list = []
+    for batch_idx in range(result.input["image"].size(0)):
+        comparison = torch.cat(
+            (result.target["image"][batch_idx], result.render[batch_idx]), 
+            dim=2
+        ).detach().cpu()
+        comparison_list.append(comparison)
+    # Concatenate all comparisons along the batch dimension
+    if comparison_list:
+        comparison = torch.stack(comparison_list, dim=0)
+        comparison = rearrange(comparison, "b v c h w -> (b h) (v w) c")
+        comparison = (comparison.numpy() * 255.0).clip(0.0, 255.0).astype(np.uint8)
+        Image.fromarray(comparison).save(os.path.join(out_dir, "gt_vs_pred.png"))
+
 
 def _save_metrics(target, prediction, view_indices, out_dir, scene_name):
-    target = target.to(torch.float32)
-    prediction = prediction.to(torch.float32)
-    
-    psnr_values = compute_psnr(target, prediction)
-    lpips_values = compute_lpips(target, prediction)
-    ssim_values = compute_ssim(target, prediction)
+    target = target.to(torch.float32)           # b, v, c, h, w
+    prediction = prediction.to(torch.float32)   # b, v, c, h, w
 
-    metrics = {
-        "summary": {
-            "scene_name": scene_name,
-            "psnr": float(psnr_values.mean()),
-            "lpips": float(lpips_values.mean()),
-            "ssim": float(ssim_values.mean())
-        },
-        "per_view": []
-    }
-    
-    for i, view_idx in enumerate(view_indices):
-        metrics["per_view"].append({
-            "view": int(view_idx), "psnr": float(psnr_values[i]), "lpips": float(lpips_values[i]), "ssim": float(ssim_values[i])
-        })
+    metrics = {}
+
+    for i, s in enumerate(scene_name):
+        psnr_values = compute_psnr(target[i], prediction[i])
+        lpips_values = compute_lpips(target[i], prediction[i])
+        ssim_values = compute_ssim(target[i], prediction[i])
+        metrics[i] = {
+            "scene_name": s,
+                "psnr": float(psnr_values.mean()),
+                "lpips": float(lpips_values.mean()),
+                "ssim": float(ssim_values.mean()),
+                "per_view": []
+            }
+        for j, view_idx in enumerate(view_indices[i]):
+            metrics[i]["per_view"].append({
+                "view": int(view_idx), "psnr": float(psnr_values[j]), "lpips": float(lpips_values[j]), "ssim": float(ssim_values[j])
+            })
     
     # Save metrics to a single JSON file
     with open(os.path.join(out_dir, "metrics.json"), "w") as f:
@@ -241,7 +243,8 @@ def summarize_evaluation(evaluation_folder):
         [
             os.path.join(evaluation_folder, dirname)
             for dirname in os.listdir(evaluation_folder)
-            if os.path.isdir(os.path.join(evaluation_folder, dirname))
+            # if os.path.isdir(os.path.join(evaluation_folder, dirname))
+            if os.path.isdir(os.path.join(evaluation_folder, dirname)) and not dirname == "videos"
         ],
         key=lambda x: int(os.path.basename(x)) if os.path.basename(x).isdigit() else os.path.basename(x)
     )

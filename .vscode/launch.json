@@ -4,9 +4,20 @@
     // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
     "version": "0.2.0",
     "configurations": [
-
         {
-            "name": "Python Debugger: Current File",
+            "name": "inference.py",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "inference.py",
+            "console": "integratedTerminal",
+            "args": [
+                "--config",
+                "configs/ilrm_test.yaml",
+            ],
+            "justMyCode": false
+        },
+        {
+            "name": "train.py",
             "type": "debugpy",
             "request": "launch",
             "module": "torch.distributed.launch",
@@ -16,8 +27,9 @@
                 "--use_env",
                 "train.py",
                 "--config",
-                "configs/ilrm_dl3dv_32input_256.yaml",
-            ]
+                "configs/ilrm_test.yaml",
+            ],
+            // "justMyCode": false
         }
     ]
 }

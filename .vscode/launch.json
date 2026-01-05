@@ -12,9 +12,9 @@
             "console": "integratedTerminal",
             "args": [
                 "--config",
-                "configs/ilrm_test.yaml",
+                "configs/ilrm.yaml",
             ],
-            "justMyCode": false
+            "justMyCode": true
         },
         {
             "name": "train.py",

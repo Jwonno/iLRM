@@ -42,15 +42,19 @@ class Processor(nn.Module):
             if arch == "r":
                 self.blocks.append(ReadBlock(config.model.transformer.d, config.model.transformer.d_head))
             elif arch == "s":
-                self.blocks.append(SelfAttnBlock(config.model.transformer.d, config.model.transformer.d_head))
+                self.blocks.append(SelfAttnBlock(config.model.transformer.d, config.model.transformer.d_head,
+                                                 block_number=i))
             self.blocks[-1].apply(init_weights)
 
     def forward(
         self,
         viewpoint_tokens,
         input_tokens,
-        V, use_checkpoint=True
+        V, use_checkpoint=True,
+        input_frames=None
     ):
+        attn_vis = True if input_frames is not None else False
+
         for i, arch in enumerate(self.model_arch):
             if use_checkpoint:
                 if arch == "r":
@@ -61,7 +65,8 @@ class Processor(nn.Module):
                 elif arch == "s":
                     viewpoint_tokens = torch.utils.checkpoint.checkpoint(
                         self.blocks[i], viewpoint_tokens,
-                        use_reentrant=False
+                        use_reentrant=False,
+                        input_frames=input_frames if attn_vis else None
                     )
                 else:
                     raise NotImplementedError
@@ -72,10 +77,13 @@ class Processor(nn.Module):
                         viewpoint_tokens, input_tokens, V
                     )
                 elif arch == "s":
-                    viewpoint_tokens = self.blocks[i](viewpoint_tokens)
+                    viewpoint_tokens = self.blocks[i](viewpoint_tokens, input_frames=input_frames if attn_vis else None)
                 else:
                     raise NotImplementedError
-                
+        
+        if attn_vis: 
+            exit()
+
         return viewpoint_tokens
 
 
@@ -88,6 +96,10 @@ class IterativeLRM(nn.Module):
         self._init_tokenizers()
         self.processor = Processor(config)
         self.vp_factor = config.model.viewpoint_factor
+
+        # save images for visualization
+        if config.inference.attn_vis: 
+            self.input_frames = None
 
     def train(self, mode=True):
         """Override the train method to keep the loss computer in eval mode"""
@@ -231,12 +243,18 @@ class IterativeLRM(nn.Module):
                 [v_ray_o, v_ray_d, v_o_cross_d], dim=2
             )
 
+            # save images for visualization
+            if self.config.inference.attn_vis: 
+                self.input_frames = input_data_dict["image"].clone()
+
         input_tokens = self.image_tokenizer(i_posed_images)
         viewpoint_tokens = self.viewpoint_tokenizer(v_viewpoints)
+        
         output_tokens = self.processor(
             viewpoint_tokens,
             input_tokens,
-            v
+            v,
+            input_frames=self.input_frames
         )
 
         gaussians = self.viewpoint_token_decoder(output_tokens)        

@@ -27,8 +27,7 @@ model:
     max_dist: 500.0
 
 data:
-  # data_path: "data/dl3dv_eval.txt"
-  data_path: "dataset/DL3DV-10K-Benchmark-samples/scene_paths.txt"
+  data_path: "dataset/scene_paths.txt"
   resize_h: 540
   resize_w: 960
   input_frame_select_type: "kmeans"
